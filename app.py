@@ -13,6 +13,8 @@ from docflow.core import (
     STAGES,
     DocFlowError,
     advance_request,
+    can_confirm_delivery,
+    confirm_delivery,
     connect,
     create_request,
     get_timeout_minutes,
@@ -49,8 +51,13 @@ def reassignment_watch(conn):
         st.rerun(scope="app")
 
 
-def settings_sidebar(conn):
+def sidebar(conn):
+    """Render the sidebar and return the name the viewer picked as themselves."""
     with st.sidebar:
+        viewer = st.selectbox(
+            "You are", people(conn), index=None, key="viewer",
+            placeholder="Choose or type your name", accept_new_options=True,
+            help="Used to show your notifications and let you confirm deliveries.")
         st.header("Settings")
         minutes = st.number_input(
             "Reassign to backup after (minutes without action)",
@@ -59,6 +66,7 @@ def settings_sidebar(conn):
         if minutes != get_timeout_minutes(conn):
             set_timeout_minutes(conn, minutes)
             st.rerun()
+    return viewer
 
 
 def request_form(conn):
@@ -81,17 +89,17 @@ def request_form(conn):
             st.success(f"Request #{request.id} received and assigned to {request.owner}.")
 
 
-def status_board(conn):
+def status_board(conn, viewer):
     board = requests_by_stage(conn)
     timeout = get_timeout_minutes(conn)
     for column, stage in zip(st.columns(len(STAGES)), STAGES):
         with column:
             st.subheader(f"{STAGE_LABELS[stage]} ({len(board[stage])})")
             for request in board[stage]:
-                request_card(conn, request, timeout)
+                request_card(conn, request, timeout, viewer)
 
 
-def request_card(conn, request, timeout):
+def request_card(conn, request, timeout, viewer):
     with st.container(border=True):
         st.markdown(f"**#{request.id} {request.title}**")
         st.caption(f"Owner: {request.owner} · Requested by: {request.requester}")
@@ -107,19 +115,39 @@ def request_card(conn, request, timeout):
             reached = request.timestamps[stage]
             if reached:
                 st.caption(f"{STAGE_LABELS[stage]}: {format_time(reached)}")
+        if request.delivered_by:
+            st.caption(f"Delivery confirmed by {request.delivered_by}")
 
         target = next_stage(request.stage)
-        if target and st.button(f"Move to {STAGE_LABELS[target]}", key=f"advance-{request.id}"):
+        if target == STAGES[-1]:
+            delivery_action(conn, request, viewer)
+        elif target and st.button(f"Move to {STAGE_LABELS[target]}",
+                                  key=f"advance-{request.id}"):
             advance_request(conn, request.id)
             st.rerun()
 
 
-def notifications_panel(conn):
+def delivery_action(conn, request, viewer):
+    if can_confirm_delivery(request, viewer):
+        if st.button("Confirm delivered to client", key=f"deliver-{request.id}",
+                     type="primary"):
+            confirm_delivery(conn, request.id, viewer)
+            st.rerun()
+    elif viewer:
+        st.caption(f"Waiting for {request.owner} to confirm delivery to the client")
+    else:
+        st.caption(f"Waiting for {request.owner} to confirm delivery. "
+                   "Pick your name under 'You are' to confirm.")
+
+
+def notifications_panel(conn, viewer):
     names = people(conn)
     if not names:
         st.info("No notifications yet.")
         return
-    person = st.selectbox("Show notifications for", names)
+    lowered = [name.casefold() for name in names]
+    default = lowered.index(viewer.casefold()) if viewer and viewer.casefold() in lowered else 0
+    person = st.selectbox("Show notifications for", names, index=default)
     notes = list_notifications(conn, person)
     unread = sum(not n.is_read for n in notes)
     st.write(f"{unread} unread of {len(notes)}")
@@ -135,12 +163,12 @@ def notifications_panel(conn):
 
 conn = get_conn()
 reassignment_watch(conn)
-settings_sidebar(conn)
+viewer = sidebar(conn)
 st.title("DocFlow")
 form_tab, board_tab, notes_tab = st.tabs(["New request", "Status board", "Notifications"])
 with form_tab:
     request_form(conn)
 with board_tab:
-    status_board(conn)
+    status_board(conn, viewer)
 with notes_tab:
-    notifications_panel(conn)
+    notifications_panel(conn, viewer)

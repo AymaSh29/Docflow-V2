@@ -56,6 +56,7 @@ _ADDED_REQUEST_COLUMNS = {
     "backup": "TEXT NOT NULL DEFAULT ''",
     "reassigned_from": "TEXT",
     "reassigned_at": "TEXT",
+    "delivered_by": "TEXT",
 }
 
 
@@ -75,6 +76,7 @@ class Request:
     backup: str = ""
     reassigned_from: str = None
     reassigned_at: str = None
+    delivered_by: str = None
 
     @property
     def is_complete(self):
@@ -135,6 +137,7 @@ def _row_to_request(row):
         backup=row["backup"],
         reassigned_from=row["reassigned_from"],
         reassigned_at=row["reassigned_at"],
+        delivered_by=row["delivered_by"],
     )
 
 
@@ -178,17 +181,53 @@ def next_stage(stage):
 
 
 def advance_request(conn, request_id, now=None):
-    """Move a request to its next stage, recording when it got there."""
+    """Move a request to its next stage, recording when it got there.
+
+    The final step, delivery, goes through confirm_delivery instead.
+    """
     request = get_request(conn, request_id)
     target = next_stage(request.stage)
     if target is None:
         raise DocFlowError(f"Request {request_id} is already delivered")
+    if target == STAGES[-1]:
+        raise DocFlowError("Delivery must be confirmed by the preparer")
 
     conn.execute(
         f"UPDATE requests SET stage = ?, {target}_at = ? WHERE id = ?",
         (target, _stamp(now), request_id),
     )
     conn.commit()
+    return get_request(conn, request_id)
+
+
+def can_confirm_delivery(request, person):
+    """True if `person` is the preparer (current owner) of an approved request."""
+    return (request.stage == "approved" and bool(person)
+            and person.strip().casefold() == request.owner.casefold())
+
+
+def confirm_delivery(conn, request_id, confirmed_by, now=None):
+    """Mark an approved request as delivered to the client.
+
+    Only the preparer, meaning the request's current owner, may confirm.
+    """
+    request = get_request(conn, request_id)
+    if request.stage != "approved":
+        raise DocFlowError(
+            f"Request {request_id} must be approved before delivery can be confirmed")
+    if not can_confirm_delivery(request, confirmed_by):
+        raise DocFlowError(
+            f"Only the preparer ({request.owner}) can confirm delivery")
+
+    cur = conn.execute(
+        "UPDATE requests SET stage = 'delivered', delivered_at = ?, delivered_by = ?"
+        " WHERE id = ? AND stage = 'approved' AND owner = ?",
+        (_stamp(now), request.owner, request_id, request.owner),
+    )
+    conn.commit()
+    if cur.rowcount != 1:
+        raise DocFlowError(
+            f"Request {request_id} changed before delivery could be confirmed")
     return get_request(conn, request_id)
 
 

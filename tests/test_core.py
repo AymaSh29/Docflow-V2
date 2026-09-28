@@ -4,6 +4,7 @@ from docflow.core import (
     STAGES,
     DocFlowError,
     advance_request,
+    confirm_delivery,
     connect,
     create_request,
     get_request,
@@ -45,12 +46,13 @@ def test_required_fields(conn, field):
     assert list_requests(conn) == []
 
 
-def test_advance_walks_through_every_stage_recording_each_time(conn):
+def test_walks_through_every_stage_recording_each_time(conn):
     request = create_request(conn, "Contract", "Sam", "Alex", now="t0")
 
-    for i, stage in enumerate(STAGES[1:], start=1):
+    for i, stage in enumerate(STAGES[1:-1], start=1):
         request = advance_request(conn, request.id, now=f"t{i}")
         assert request.stage == stage
+    request = confirm_delivery(conn, request.id, "Alex", now="t4")
 
     assert request.is_complete
     assert request.timestamps == {stage: f"t{i}" for i, stage in enumerate(STAGES)}
@@ -58,8 +60,9 @@ def test_advance_walks_through_every_stage_recording_each_time(conn):
 
 def test_cannot_advance_past_delivered(conn):
     request = create_request(conn, "Contract", "Sam", "Alex")
-    for _ in STAGES[1:]:
+    for _ in STAGES[1:-1]:
         advance_request(conn, request.id)
+    confirm_delivery(conn, request.id, "Alex")
 
     with pytest.raises(DocFlowError, match="already delivered"):
         advance_request(conn, request.id)

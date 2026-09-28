@@ -6,6 +6,7 @@ from docflow.core import (
     DEFAULT_TIMEOUT_MINUTES,
     DocFlowError,
     advance_request,
+    confirm_delivery,
     connect,
     create_request,
     get_request,
@@ -92,8 +93,9 @@ def test_reassigned_only_once_with_no_duplicate_notifications(conn):
 def test_no_backup_or_delivered_means_no_reassignment(conn):
     no_backup = create_request(conn, "A", "Sam", "Alex", now=T0)
     delivered = create_request(conn, "B", "Sam", "Alex", backup="Bo", now=T0)
-    for _ in range(4):
+    for _ in range(3):
         advance_request(conn, delivered.id, now=T0)
+    confirm_delivery(conn, delivered.id, "Alex", now=T0)
 
     assert reassign_overdue(conn, now=minutes(60)) == []
     assert get_request(conn, no_backup.id).owner == "Alex"
