@@ -31,13 +31,18 @@ from docflow.core import (
 
 DB_PATH = os.environ.get("DOCFLOW_DB", "docflow.db")
 CHECK_EVERY_SECONDS = 10
+# Offered under "You are" from the start, since a hosted app begins with an empty database.
+TEAM = ["Ayma", "Kostas", "Alex", "Elina"]
 
 st.set_page_config(page_title="DocFlow", layout="wide")
 
 
 @st.cache_resource
 def get_conn():
-    return connect(DB_PATH)
+    conn = connect(DB_PATH)
+    for name in TEAM:
+        add_person(conn, name)
+    return conn
 
 
 def format_time(value):
