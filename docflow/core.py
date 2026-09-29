@@ -49,6 +49,11 @@ _SCHEMA = [
         is_read INTEGER NOT NULL DEFAULT 0
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS people (
+        name TEXT PRIMARY KEY COLLATE NOCASE
+    )
+    """,
 ]
 
 # Columns added after the first release; added to existing databases on connect.
@@ -333,10 +338,26 @@ def mark_notifications_read(conn, recipient):
     conn.commit()
 
 
+def add_person(conn, name):
+    """Remember a name so it is offered in the 'You are' picker from now on."""
+    name = name.strip()
+    if not name:
+        raise DocFlowError("A name is required")
+    conn.execute("INSERT OR IGNORE INTO people (name) VALUES (?)", (name,))
+    conn.commit()
+
+
 def people(conn):
-    """Owners and backups on any request, for picking whose notifications to show."""
+    """Saved names plus owners and backups on any request, for the name pickers.
+
+    Names that differ only in case are listed once, using the saved spelling.
+    """
     rows = conn.execute(
-        "SELECT owner AS name FROM requests UNION SELECT backup FROM requests"
-        " UNION SELECT reassigned_from FROM requests"
+        "SELECT name FROM people UNION ALL SELECT owner FROM requests"
+        " UNION ALL SELECT backup FROM requests UNION ALL SELECT reassigned_from FROM requests"
     ).fetchall()
-    return sorted({row["name"] for row in rows if row["name"]}, key=str.casefold)
+    names = {}
+    for row in rows:
+        if row["name"]:
+            names.setdefault(row["name"].casefold(), row["name"])
+    return sorted(names.values(), key=str.casefold)

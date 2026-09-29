@@ -5,6 +5,7 @@ import pytest
 from docflow.core import (
     DEFAULT_TIMEOUT_MINUTES,
     DocFlowError,
+    add_person,
     advance_request,
     confirm_delivery,
     connect,
@@ -119,6 +120,22 @@ def test_notifications_are_per_person_and_can_be_marked_read(conn):
     assert all(n.is_read for n in list_notifications(conn, "Bo"))
     assert not any(n.is_read for n in list_notifications(conn, "Alex"))
     assert people(conn) == ["Alex", "Bo"]
+
+
+def test_added_people_are_saved_and_listed_once(tmp_path):
+    path = tmp_path / "people.db"
+    conn = connect(path)
+    add_person(conn, "  Cam ")
+    add_person(conn, "cam")  # same person, different case
+    create_request(conn, "Contract", "Sam", "alex", backup="Cam", now=T0)
+    add_person(conn, "Alex")
+    conn.close()
+
+    conn = connect(path)
+    assert people(conn) == ["Alex", "Cam"]
+    with pytest.raises(DocFlowError):
+        add_person(conn, "   ")
+    conn.close()
 
 
 def test_existing_database_gets_new_columns(tmp_path):

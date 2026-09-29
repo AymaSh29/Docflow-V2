@@ -12,6 +12,7 @@ from docflow.core import (
     STAGE_LABELS,
     STAGES,
     DocFlowError,
+    add_person,
     advance_request,
     can_confirm_delivery,
     confirm_delivery,
@@ -54,10 +55,15 @@ def reassignment_watch(conn):
 def sidebar(conn):
     """Render the sidebar and return the name the viewer picked as themselves."""
     with st.sidebar:
+        names = people(conn)
         viewer = st.selectbox(
-            "You are", people(conn), index=None, key="viewer",
+            "You are", names, index=None, key="viewer",
             placeholder="Choose or type your name", accept_new_options=True,
-            help="Used to show your notifications and let you confirm deliveries.")
+            help="Used to show your notifications and let you confirm deliveries. "
+                 "A new name you type is saved for next time.")
+        if viewer and viewer.strip() and viewer.strip().casefold() not in {
+                name.casefold() for name in names}:
+            add_person(conn, viewer)
         st.header("Settings")
         minutes = st.number_input(
             "Reassign to backup after (minutes without action)",
