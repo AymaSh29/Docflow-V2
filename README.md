@@ -13,7 +13,8 @@ name typed into "You are" is saved and offered to everyone from then on; the tea
 in `TEAM` at the top of `app.py` are always offered. There
 are no logins, so the name picker reflects the workflow rather than enforcing security.
 
-Each request can name a backup. If the owner does not move the request to its next stage
+Each request is given a backup automatically; the form does not ask for one. The backup
+is the team member (other than the owner) who owns the fewest undelivered requests. If the owner does not move the request to its next stage
 within the timeout (set in the sidebar, in minutes; 2 by default for demos), it is
 reassigned to the backup, and both people get a message in the Notifications tab.
 A request is reassigned at most once and never after it is delivered. The check runs

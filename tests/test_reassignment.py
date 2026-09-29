@@ -7,6 +7,7 @@ from docflow.core import (
     DocFlowError,
     add_person,
     advance_request,
+    choose_backup,
     confirm_delivery,
     connect,
     create_request,
@@ -46,6 +47,26 @@ def test_timeout_defaults_and_is_configurable():
 def test_backup_cannot_be_the_owner(conn):
     with pytest.raises(DocFlowError, match="backup"):
         create_request(conn, "Contract", "Sam", "Alex", backup=" alex ")
+
+
+def test_backup_is_least_busy_teammate_other_than_owner(conn):
+    team = ["Ayma", "Kostas", "Alex"]
+    assert choose_backup(conn, "Ayma", team) == "Kostas"  # tie goes to team order
+    assert choose_backup(conn, " ayma ", team) == "Kostas"
+
+    open_request = create_request(conn, "A", "Sam", "Kostas", now=T0)
+    assert choose_backup(conn, "Ayma", team) == "Alex"
+
+    create_request(conn, "B", "Sam", "Elina", backup="Alex", now=T0)
+    assert choose_backup(conn, "Elina", team) == "Ayma"  # being a backup counts too
+
+    for _ in range(3):
+        advance_request(conn, open_request.id, now=T0)
+    confirm_delivery(conn, open_request.id, "Kostas", now=T0)
+    assert choose_backup(conn, "Ayma", team) == "Kostas"  # delivered work does not count
+
+    assert choose_backup(conn, "Ayma", ["Ayma"]) == ""
+    assert choose_backup(conn, "Ayma", []) == ""
 
 
 def test_not_reassigned_before_timeout(conn):

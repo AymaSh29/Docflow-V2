@@ -167,6 +167,25 @@ def create_request(conn, title, requester, owner, details="", backup="", now=Non
     return get_request(conn, cur.lastrowid)
 
 
+def choose_backup(conn, owner, team):
+    """Pick a backup for a new request: the least busy team member other than the owner.
+
+    Busy means owning, or being backup on, requests that are not delivered yet; ties
+    go to whoever comes first in `team`. Returns '' if nobody else is on the team.
+    """
+    owner = owner.strip().casefold()
+    candidates = [name for name in team if name.casefold() != owner]
+    if not candidates:
+        return ""
+    load = {}
+    for request in list_requests(conn):
+        if request.is_complete:
+            continue
+        for name in {request.owner.casefold(), request.backup.casefold()} - {""}:
+            load[name] = load.get(name, 0) + 1
+    return min(candidates, key=lambda name: load.get(name.casefold(), 0))
+
+
 def get_request(conn, request_id):
     row = conn.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
     if row is None:
