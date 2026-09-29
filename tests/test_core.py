@@ -58,6 +58,22 @@ def test_walks_through_every_stage_recording_each_time(conn):
     assert request.timestamps == {stage: f"t{i}" for i, stage in enumerate(STAGES)}
 
 
+def test_cannot_skip_a_stage(conn):
+    request = create_request(conn, "Contract", "Sam", "Alex", now="t0")
+
+    for i, stage in enumerate(STAGES[:-1]):
+        # From every stage before approved, delivery cannot be jumped to directly.
+        if stage != "approved":
+            with pytest.raises(DocFlowError, match="must be approved"):
+                confirm_delivery(conn, request.id, "Alex")
+            assert get_request(conn, request.id).stage == stage
+        request = (advance_request(conn, request.id, now=f"t{i + 1}") if stage != "approved"
+                   else confirm_delivery(conn, request.id, "Alex", now=f"t{i + 1}"))
+        # Each step lands on the very next stage and stamps nothing beyond it.
+        assert request.stage == STAGES[i + 1]
+        assert all(request.timestamps[later] is None for later in STAGES[i + 2:])
+
+
 def test_cannot_advance_past_delivered(conn):
     request = create_request(conn, "Contract", "Sam", "Alex")
     for _ in STAGES[1:-1]:
