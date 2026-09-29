@@ -22,9 +22,11 @@ from docflow.core import (
     create_request,
     get_timeout_minutes,
     list_notifications,
+    list_requests,
     mark_notifications_read,
     next_stage,
     people,
+    processing_readout,
     reassign_deadline,
     reassign_overdue,
     requests_by_stage,
@@ -50,6 +52,15 @@ def get_conn():
 def format_time(value):
     moment = datetime.fromisoformat(value) if isinstance(value, str) else value
     return moment.astimezone().strftime("%d %b %Y, %H:%M")
+
+
+def format_duration(delta):
+    seconds = round(delta.total_seconds())
+    hours, rest = divmod(seconds, 3600)
+    minutes, seconds = divmod(rest, 60)
+    if hours:
+        return f"{hours} h {minutes:02d} min"
+    return f"{minutes} min {seconds:02d} s" if minutes else f"{seconds} s"
 
 
 @st.fragment(run_every=CHECK_EVERY_SECONDS)
@@ -172,14 +183,36 @@ def notifications_panel(conn, viewer):
             st.caption(format_time(note.created_at))
 
 
+def readout_panel(conn):
+    readout = processing_readout(list_requests(conn))
+    if readout is None:
+        st.info("No requests have been delivered yet.")
+        return
+    total, waiting, preparation = st.columns(3)
+    total.metric("Median processing time", format_duration(readout.median_total))
+    waiting.metric("Median waiting", format_duration(readout.median_waiting))
+    preparation.metric("Median preparation", format_duration(readout.median_preparation))
+    share = readout.waiting_share
+    st.progress(share, text=f"Across all delivered requests, {share:.0%} of processing time "
+                            f"was waiting and {1 - share:.0%} was preparation.")
+    st.caption(
+        f"Based on {readout.delivered} delivered request(s). Processing runs from received "
+        "to delivered. Preparation is from 'In preparation' to 'Approved'; waiting is the "
+        "rest, before preparation starts and after approval. Each median is taken "
+        "separately, so the two parts need not add up to the total.")
+
+
 conn = get_conn()
 reassignment_watch(conn)
 viewer = sidebar(conn)
 st.title("DocFlow")
-form_tab, board_tab, notes_tab = st.tabs(["New request", "Status board", "Notifications"])
+form_tab, board_tab, notes_tab, readout_tab = st.tabs(
+    ["New request", "Status board", "Notifications", "Readout"])
 with form_tab:
     request_form(conn)
 with board_tab:
     status_board(conn, viewer)
 with notes_tab:
     notifications_panel(conn, viewer)
+with readout_tab:
+    readout_panel(conn)

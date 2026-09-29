@@ -4,6 +4,7 @@ Kept free of Streamlit so it can be tested directly against SQLite.
 """
 
 import sqlite3
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -290,6 +291,47 @@ def requests_by_stage(conn):
     for request in list_requests(conn):
         board[request.stage].append(request)
     return board
+
+
+# --- Processing time readout ------------------------------------------------
+
+@dataclass
+class ProcessingReadout:
+    delivered: int  # number of delivered requests the figures are based on
+    median_total: timedelta
+    median_waiting: timedelta
+    median_preparation: timedelta
+    waiting_share: float  # fraction of all processing time spent waiting, 0..1
+
+
+def processing_readout(requests):
+    """Median processing time of delivered requests, split into waiting and preparation.
+
+    Processing runs from received to delivered. Preparation is the time from entering
+    'in preparation' to approval; the rest (before preparation starts and after
+    approval) is waiting. Returns None if nothing has been delivered yet.
+    """
+    totals, waits, preps = [], [], []
+    for request in requests:
+        if not request.is_complete:
+            continue
+        at = {stage: datetime.fromisoformat(value)
+              for stage, value in request.timestamps.items()}
+        total = at["delivered"] - at["received"]
+        preparation = at["approved"] - at["in_preparation"]
+        totals.append(total)
+        preps.append(preparation)
+        waits.append(total - preparation)
+    if not totals:
+        return None
+    total_time = sum(totals, timedelta())
+    return ProcessingReadout(
+        delivered=len(totals),
+        median_total=statistics.median(totals),
+        median_waiting=statistics.median(waits),
+        median_preparation=statistics.median(preps),
+        waiting_share=sum(waits, timedelta()) / total_time if total_time else 0.0,
+    )
 
 
 # --- Reassignment when the owner does not act -------------------------------

@@ -23,6 +23,11 @@ reassigned to the backup, and both people get a message in the Notifications tab
 A request is reassigned at most once and never after it is delivered. The check runs
 every 10 seconds while at least one person has the app open.
 
+The Readout tab shows, for delivered requests, the median processing time (received to
+delivered) and how much of it was preparation (in preparation to approved) versus waiting
+(everything else: before preparation starts and after approval), from the recorded
+stage timestamps.
+
 ## Run
 
 ```
