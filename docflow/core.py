@@ -212,7 +212,7 @@ def can_confirm_delivery(request, person):
 
 
 def confirm_delivery(conn, request_id, confirmed_by, now=None):
-    """Mark an approved request as delivered to the client.
+    """Mark an approved request as delivered to the client and notify the requester.
 
     Only the preparer, meaning the request's current owner, may confirm.
     """
@@ -224,15 +224,20 @@ def confirm_delivery(conn, request_id, confirmed_by, now=None):
         raise DocFlowError(
             f"Only the preparer ({request.owner}) can confirm delivery")
 
+    delivered_at = _stamp(now)
     cur = conn.execute(
         "UPDATE requests SET stage = 'delivered', delivered_at = ?, delivered_by = ?"
         " WHERE id = ? AND stage = 'approved' AND owner = ?",
-        (_stamp(now), request.owner, request_id, request.owner),
+        (delivered_at, request.owner, request_id, request.owner),
     )
-    conn.commit()
     if cur.rowcount != 1:
+        conn.commit()
         raise DocFlowError(
             f"Request {request_id} changed before delivery could be confirmed")
+    _notify(conn, request.requester, request_id, delivered_at,
+            f"Your request #{request_id} \"{request.title}\" has been delivered "
+            f"(confirmed by {request.owner}).")
+    conn.commit()
     return get_request(conn, request_id)
 
 
@@ -314,7 +319,7 @@ def _notify(conn, recipient, request_id, now, message):
     conn.execute(
         "INSERT INTO notifications (recipient, request_id, message, created_at)"
         " VALUES (?, ?, ?, ?)",
-        (recipient, request_id, message, _iso(now)),
+        (recipient, request_id, message, _stamp(now)),
     )
 
 
@@ -348,12 +353,13 @@ def add_person(conn, name):
 
 
 def people(conn):
-    """Saved names plus owners and backups on any request, for the name pickers.
+    """Saved names plus requesters, owners and backups on any request, for the name pickers.
 
     Names that differ only in case are listed once, using the saved spelling.
     """
     rows = conn.execute(
-        "SELECT name FROM people UNION ALL SELECT owner FROM requests"
+        "SELECT name FROM people UNION ALL SELECT requester FROM requests"
+        " UNION ALL SELECT owner FROM requests"
         " UNION ALL SELECT backup FROM requests UNION ALL SELECT reassigned_from FROM requests"
     ).fetchall()
     names = {}

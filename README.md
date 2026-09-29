@@ -7,7 +7,8 @@ reached is recorded.
 
 Delivery to the client is confirmed by the preparer (the request's current owner) with one
 click. Pick your name under "You are" in the sidebar; on approved requests you own, a
-"Confirm delivered to client" button appears, and the card records who confirmed. A new
+"Confirm delivered to client" button appears, and the card records who confirmed. The
+person in "Requested by" then gets a delivery message in the Notifications tab. A new
 name typed into "You are" is saved and offered to everyone from then on; the team names
 in `TEAM` at the top of `app.py` are always offered. There
 are no logins, so the name picker reflects the workflow rather than enforcing security.

@@ -10,6 +10,8 @@ from docflow.core import (
     connect,
     create_request,
     get_request,
+    list_notifications,
+    people,
     reassign_overdue,
     set_timeout_minutes,
 )
@@ -42,6 +44,21 @@ def test_preparer_confirms_delivery_in_one_step(conn):
     assert request.delivered_by == "Alex"
 
 
+def test_requester_is_notified_of_delivery(conn):
+    request = approved_request(conn)
+
+    confirm_delivery(conn, request.id, "Alex", now="2026-01-02T10:00:00+00:00")
+
+    [note] = list_notifications(conn, "sam")  # names match case-insensitively
+    assert note.request_id == request.id
+    assert note.message == (f"Your request #{request.id} \"Contract\" has been delivered "
+                            "(confirmed by Alex).")
+    assert note.created_at == "2026-01-02T10:00:00+00:00"
+    assert not note.is_read
+    assert list_notifications(conn, "Alex") == []
+    assert "Sam" in people(conn)
+
+
 def test_name_match_ignores_case_and_spaces_but_stores_owner_name(conn):
     request = approved_request(conn)
 
@@ -57,6 +74,7 @@ def test_only_the_preparer_can_confirm(conn):
         with pytest.raises(DocFlowError, match="Only the preparer"):
             confirm_delivery(conn, request.id, person)
     assert get_request(conn, request.id).stage == "approved"
+    assert list_notifications(conn, "Sam") == []
 
 
 def test_must_be_approved_first(conn):
@@ -113,3 +131,4 @@ def test_confirm_fails_if_reassigned_in_the_meantime(conn, monkeypatch):
         confirm_delivery(conn, request.id, "Alex")
     monkeypatch.undo()
     assert get_request(conn, request.id).stage == "approved"
+    assert list_notifications(conn, "Sam") == []

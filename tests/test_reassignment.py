@@ -119,7 +119,7 @@ def test_notifications_are_per_person_and_can_be_marked_read(conn):
 
     assert all(n.is_read for n in list_notifications(conn, "Bo"))
     assert not any(n.is_read for n in list_notifications(conn, "Alex"))
-    assert people(conn) == ["Alex", "Bo"]
+    assert people(conn) == ["Alex", "Bo", "Sam"]
 
 
 def test_added_people_are_saved_and_listed_once(tmp_path):
@@ -132,7 +132,7 @@ def test_added_people_are_saved_and_listed_once(tmp_path):
     conn.close()
 
     conn = connect(path)
-    assert people(conn) == ["Alex", "Cam"]
+    assert people(conn) == ["Alex", "Cam", "Sam"]
     with pytest.raises(DocFlowError):
         add_person(conn, "   ")
     conn.close()
