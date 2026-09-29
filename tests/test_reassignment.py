@@ -8,6 +8,7 @@ from docflow.core import (
     add_person,
     advance_request,
     choose_backup,
+    choose_owner,
     confirm_delivery,
     connect,
     create_request,
@@ -67,6 +68,19 @@ def test_backup_is_least_busy_teammate_other_than_owner(conn):
 
     assert choose_backup(conn, "Ayma", ["Ayma"]) == ""
     assert choose_backup(conn, "Ayma", []) == ""
+
+
+def test_owner_is_least_busy_teammate(conn):
+    team = ["Ayma", "Kostas", "Alex"]
+    assert choose_owner(conn, team) == "Ayma"  # tie goes to team order
+
+    create_request(conn, "A", "Sam", "Ayma", backup="Kostas", now=T0)
+    assert choose_owner(conn, team) == "Alex"  # Kostas owns none but backs up one
+
+    create_request(conn, "B", "Sam", "Alex", backup="Ayma", now=T0)
+    assert choose_owner(conn, team) == "Kostas"  # owning counts before backing up
+
+    assert choose_owner(conn, []) == ""
 
 
 def test_not_reassigned_before_timeout(conn):

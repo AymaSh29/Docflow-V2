@@ -167,23 +167,47 @@ def create_request(conn, title, requester, owner, details="", backup="", now=Non
     return get_request(conn, cur.lastrowid)
 
 
+def _open_load(conn):
+    """For each person (casefolded): (requests owned, requests owned or backed up).
+
+    Only requests that are not delivered yet count.
+    """
+    owned, total = {}, {}
+    for request in list_requests(conn):
+        if request.is_complete:
+            continue
+        owner = request.owner.casefold()
+        owned[owner] = owned.get(owner, 0) + 1
+        for name in {owner, request.backup.casefold()} - {""}:
+            total[name] = total.get(name, 0) + 1
+    return owned, total
+
+
+def choose_owner(conn, team):
+    """Pick an owner for a new request: the team member owning the fewest open requests.
+
+    Ties go to whoever backs up fewer, then to whoever comes first in `team`.
+    Returns '' if the team is empty.
+    """
+    if not team:
+        return ""
+    owned, total = _open_load(conn)
+    return min(team, key=lambda name: (owned.get(name.casefold(), 0),
+                                       total.get(name.casefold(), 0)))
+
+
 def choose_backup(conn, owner, team):
     """Pick a backup for a new request: the least busy team member other than the owner.
 
-    Busy means owning, or being backup on, requests that are not delivered yet; ties
-    go to whoever comes first in `team`. Returns '' if nobody else is on the team.
+    Busy means owning, or backing up, open requests; ties go to whoever comes first
+    in `team`. Returns '' if nobody else is on the team.
     """
     owner = owner.strip().casefold()
     candidates = [name for name in team if name.casefold() != owner]
     if not candidates:
         return ""
-    load = {}
-    for request in list_requests(conn):
-        if request.is_complete:
-            continue
-        for name in {request.owner.casefold(), request.backup.casefold()} - {""}:
-            load[name] = load.get(name, 0) + 1
-    return min(candidates, key=lambda name: load.get(name.casefold(), 0))
+    _, total = _open_load(conn)
+    return min(candidates, key=lambda name: total.get(name.casefold(), 0))
 
 
 def get_request(conn, request_id):

@@ -16,6 +16,7 @@ from docflow.core import (
     advance_request,
     can_confirm_delivery,
     choose_backup,
+    choose_owner,
     confirm_delivery,
     connect,
     create_request,
@@ -85,12 +86,12 @@ def request_form(conn):
     with st.form("new_request", clear_on_submit=True):
         title = st.text_input("Document requested *")
         requester = st.text_input("Requested by *")
-        owner = st.text_input("Owner *")
         details = st.text_area("Details")
         submitted = st.form_submit_button("Submit request")
 
     if submitted:
         try:
+            owner = choose_owner(conn, TEAM)
             backup = choose_backup(conn, owner, TEAM)
             request = create_request(conn, title, requester, owner, details, backup)
         except DocFlowError as err:
