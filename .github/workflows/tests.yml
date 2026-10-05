@@ -19,4 +19,4 @@ jobs:
       - name: Run tests
         run: pytest --junitxml=test-report.xml
       - name: Check test count, skips, xfails and errors
-        run: python .github/scripts/check_test_report.py test-report.xml 37
+        run: python .github/scripts/check_test_report.py test-report.xml 49

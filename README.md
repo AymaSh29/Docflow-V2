@@ -39,6 +39,23 @@ streamlit run app.py
 
 Data is stored in `docflow.db` (set `DOCFLOW_DB` to use a different file).
 
+## Keeping data across restarts (Turso)
+
+A local file is lost whenever a host like Streamlit Community Cloud restarts or
+redeploys the app. To keep the data, store it in a [Turso](https://turso.tech) database
+by setting two values:
+
+- `TURSO_DATABASE_URL`
+- `TURSO_AUTH_TOKEN`
+
+On Streamlit Community Cloud, add them under the app's Settings → Secrets. To run locally
+against Turso, put them in `.streamlit/secrets.toml`, which is git-ignored and must never be
+committed; environment variables with the same names also work. With neither set, the app
+uses the local file as above. The sidebar shows which storage is in use.
+
+`scripts/check_turso.py` checks a real Turso database end to end. It writes test requests,
+so only run it against a throwaway database.
+
 ## Test
 
 ```

@@ -31,9 +31,13 @@ from docflow.core import (
     reassign_overdue,
     requests_by_stage,
     set_timeout_minutes,
+    turso_settings,
 )
 
 DB_PATH = os.environ.get("DOCFLOW_DB", "docflow.db")
+# With Turso set up, the local file is only a replica; kept apart from DB_PATH so an
+# existing local database is never opened as one.
+REPLICA_PATH = "docflow-replica.db"
 CHECK_EVERY_SECONDS = 10
 # Offered under "You are" from the start, since a hosted app begins with an empty database.
 TEAM = ["Ayma", "Kostas", "Alex", "Elina"]
@@ -43,12 +47,25 @@ ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "docflow-icon.png"
 st.set_page_config(page_title="DocFlow", page_icon=ICON_PATH, layout="wide")
 
 
+def read_secrets():
+    """Streamlit secrets, or nothing if there is no secrets file."""
+    try:
+        return dict(st.secrets)
+    except FileNotFoundError:
+        return {}
+
+
 @st.cache_resource
 def get_conn():
-    conn = connect(DB_PATH)
+    """The shared connection and a short description of where data is stored."""
+    url, token = turso_settings(read_secrets(), os.environ)
+    if url:
+        conn, storage = connect(REPLICA_PATH, url, token), "Turso (kept across restarts)"
+    else:
+        conn, storage = connect(DB_PATH), f"local file {DB_PATH}"
     for name in TEAM:
         add_person(conn, name)
-    return conn
+    return conn, storage
 
 
 def format_time(value):
@@ -72,7 +89,7 @@ def reassignment_watch(conn):
         st.rerun(scope="app")
 
 
-def sidebar(conn):
+def sidebar(conn, storage):
     """Render the sidebar and return the name the viewer picked as themselves."""
     with st.sidebar:
         names = people(conn)
@@ -92,6 +109,7 @@ def sidebar(conn):
         if minutes != get_timeout_minutes(conn):
             set_timeout_minutes(conn, minutes)
             st.rerun()
+        st.caption(f"Storage: {storage}")
     return viewer
 
 
@@ -204,9 +222,13 @@ def readout_panel(conn):
         "separately, so the two parts need not add up to the total.")
 
 
-conn = get_conn()
+try:
+    conn, storage = get_conn()
+except DocFlowError as err:
+    st.error(f"Cannot open the database: {err}")
+    st.stop()
 reassignment_watch(conn)
-viewer = sidebar(conn)
+viewer = sidebar(conn, storage)
 st.title("DocFlow")
 form_tab, board_tab, notes_tab, readout_tab = st.tabs(
     ["New request", "Status board", "Notifications", "Readout"])
