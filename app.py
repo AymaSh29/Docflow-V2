@@ -38,7 +38,9 @@ CHECK_EVERY_SECONDS = 10
 # Offered under "You are" from the start, since a hosted app begins with an empty database.
 TEAM = ["Ayma", "Kostas", "Alex", "Elina"]
 
-st.set_page_config(page_title="DocFlow", layout="wide")
+ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "docflow-icon.png")
+
+st.set_page_config(page_title="DocFlow", page_icon=ICON_PATH, layout="wide")
 
 
 @st.cache_resource
