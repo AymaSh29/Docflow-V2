@@ -5,3 +5,4 @@ __pycache__/
 *.db
 .claude/
 .env
+.streamlit/secrets.toml

@@ -5,8 +5,11 @@ Kept free of Streamlit so it can be tested directly against SQLite.
 
 import sqlite3
 import statistics
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
+import libsql
 
 STAGES = ["received", "picked_up", "in_preparation", "approved", "delivered"]
 
@@ -114,9 +117,107 @@ def _stamp(now):
     return _iso(now) if isinstance(now, datetime) else now
 
 
-def connect(path):
-    conn = sqlite3.connect(path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+# --- Storage: a local SQLite file, or a Turso database ----------------------
+
+TURSO_SETTINGS = ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN")
+
+
+def turso_settings(*sources):
+    """The Turso database URL and auth token, each from the first source that sets it.
+
+    Sources are mappings such as Streamlit secrets and os.environ; blank values count
+    as unset. Returns (None, None) when neither is set, meaning use a local file.
+    """
+    url, token = (_first_set(name, sources) for name in TURSO_SETTINGS)
+    if bool(url) != bool(token):
+        raise DocFlowError(f"Set both {' and '.join(TURSO_SETTINGS)} to use Turso, "
+                           "or neither to use a local file")
+    return url, token
+
+
+def _first_set(name, sources):
+    for source in sources:
+        value = str(source.get(name) or "").strip()
+        if value:
+            return value
+    return None
+
+
+class _Row(tuple):
+    """A result row readable by column name or by position, like sqlite3.Row."""
+
+    def __new__(cls, values, columns):
+        row = super().__new__(cls, values)
+        row._columns = columns
+        return row
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            key = self._columns[key]
+        return super().__getitem__(key)
+
+
+class _Cursor:
+    """The results of one statement, fetched up front so the connection lock is short."""
+
+    def __init__(self, cursor):
+        self.lastrowid = cursor.lastrowid
+        self.rowcount = cursor.rowcount
+        # After a write, libsql gives an empty description and fetchall() returns None.
+        columns = {column[0]: i for i, column in enumerate(cursor.description or ())}
+        self._rows = [_Row(values, columns) for values in cursor.fetchall()] if columns else []
+
+    def fetchone(self):
+        return self._rows.pop(0) if self._rows else None
+
+    def fetchall(self):
+        rows, self._rows = self._rows, []
+        return rows
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class LibsqlConnection:
+    """Wraps a libsql connection so core.py can use it like the sqlite3 one.
+
+    libsql has no row_factory, its cursors cannot be iterated, and it does not document
+    thread safety, while Streamlit sessions share one connection; this adds all three.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+        self._lock = threading.Lock()
+
+    def execute(self, sql, parameters=()):
+        with self._lock:
+            return _Cursor(self._conn.execute(sql, parameters))
+
+    def commit(self):
+        with self._lock:
+            self._conn.commit()
+
+    def close(self):
+        with self._lock:
+            self._conn.close()
+
+
+def connect(path, sync_url=None, auth_token=None):
+    """Open the DocFlow database, creating or updating its tables.
+
+    Without a Turso `sync_url` this is the SQLite file at `path`. With one, `path` is
+    a local replica of the Turso database: writes go to Turso and the replica is
+    refreshed from it on connect, so the data survives the host losing its disk.
+    """
+    if sync_url:
+        if not auth_token:
+            raise DocFlowError("A Turso auth token is required")
+        replica = libsql.connect(str(path), sync_url=sync_url, auth_token=auth_token)
+        replica.sync()
+        conn = LibsqlConnection(replica)
+    else:
+        conn = sqlite3.connect(path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
     init_db(conn)
     return conn
 
