@@ -73,6 +73,17 @@ class DocFlowError(ValueError):
     """Raised when a request is invalid or cannot move to the next stage."""
 
 
+class StorageError(DocFlowError):
+    """Raised when the database cannot be reached, read or written."""
+
+
+# Errors the database drivers raise; libsql reports network and auth failures as ValueError.
+_DRIVER_ERRORS = (ValueError, libsql.Error, sqlite3.Error)
+# What the app catches around database calls. The local SQLite connection is not
+# wrapped, so its own errors are listed alongside StorageError.
+STORAGE_ERRORS = (StorageError, sqlite3.Error)
+
+
 @dataclass
 class Request:
     id: int
@@ -191,11 +202,17 @@ class LibsqlConnection:
 
     def execute(self, sql, parameters=()):
         with self._lock:
-            return _Cursor(self._conn.execute(sql, parameters))
+            try:
+                return _Cursor(self._conn.execute(sql, parameters))
+            except _DRIVER_ERRORS as err:
+                raise StorageError("The database could not be read or written") from err
 
     def commit(self):
         with self._lock:
-            self._conn.commit()
+            try:
+                self._conn.commit()
+            except _DRIVER_ERRORS as err:
+                raise StorageError("The database could not be written") from err
 
     def close(self):
         with self._lock:
@@ -209,16 +226,21 @@ def connect(path, sync_url=None, auth_token=None):
     a local replica of the Turso database: writes go to Turso and the replica is
     refreshed from it on connect, so the data survives the host losing its disk.
     """
-    if sync_url:
-        if not auth_token:
-            raise DocFlowError("A Turso auth token is required")
-        replica = libsql.connect(str(path), sync_url=sync_url, auth_token=auth_token)
-        replica.sync()
-        conn = LibsqlConnection(replica)
-    else:
-        conn = sqlite3.connect(path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-    init_db(conn)
+    if sync_url and not auth_token:
+        raise DocFlowError("A Turso auth token is required")
+    try:
+        if sync_url:
+            replica = libsql.connect(str(path), sync_url=sync_url, auth_token=auth_token)
+            replica.sync()
+            conn = LibsqlConnection(replica)
+        else:
+            conn = sqlite3.connect(path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+        init_db(conn)
+    except StorageError:
+        raise
+    except _DRIVER_ERRORS as err:
+        raise StorageError("The database could not be reached") from err
     return conn
 
 

@@ -7,6 +7,7 @@ import pytest
 from docflow.core import (
     DocFlowError,
     LibsqlConnection,
+    StorageError,
     add_person,
     advance_request,
     confirm_delivery,
@@ -83,6 +84,45 @@ def test_only_one_turso_setting_is_an_error(settings):
 def test_turso_connect_needs_a_token(tmp_path):
     with pytest.raises(DocFlowError, match="token"):
         connect(tmp_path / "replica.db", sync_url=URL)
+
+
+# --- Storage failures become StorageError ----------------------------------------
+
+UNREACHABLE_URL = "http://127.0.0.1:9"  # a closed local port: fails fast, no network
+
+
+def test_storage_error_is_a_docflow_error():
+    assert issubclass(StorageError, DocFlowError)
+
+
+def test_unreachable_turso_raises_storage_error(tmp_path):
+    with pytest.raises(StorageError):
+        connect(tmp_path / "replica.db", sync_url=UNREACHABLE_URL, auth_token="fake")
+
+
+def test_unopenable_sqlite_file_raises_storage_error(tmp_path):
+    with pytest.raises(StorageError):
+        connect(tmp_path)  # a directory, not a database file
+
+
+class BrokenDriver:
+    """A libsql connection whose network has gone away."""
+
+    def execute(self, sql, parameters=()):
+        raise ValueError("Hrana: stream error")
+
+    def commit(self):
+        raise ValueError("Hrana: stream error")
+
+
+@pytest.mark.parametrize("call", [
+    lambda conn: conn.execute("SELECT 1"),
+    lambda conn: conn.commit(),
+], ids=["execute", "commit"])
+def test_libsql_driver_failures_raise_storage_error(call):
+    with pytest.raises(StorageError) as caught:
+        call(LibsqlConnection(BrokenDriver()))
+    assert isinstance(caught.value.__cause__, ValueError)
 
 
 # --- The libsql connection behaves like the sqlite3 one -------------------------
