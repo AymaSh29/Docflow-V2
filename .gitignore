@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.db
+docflow-replica.db*
 .claude/
 .env
 .streamlit/secrets.toml

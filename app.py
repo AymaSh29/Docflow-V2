@@ -3,6 +3,7 @@
 Run with:  streamlit run app.py
 """
 
+import logging
 import os
 from datetime import datetime
 
@@ -11,6 +12,7 @@ import streamlit as st
 from docflow.core import (
     STAGE_LABELS,
     STAGES,
+    STORAGE_ERRORS,
     DocFlowError,
     add_person,
     advance_request,
@@ -37,8 +39,16 @@ from docflow.core import (
 DB_PATH = os.environ.get("DOCFLOW_DB", "docflow.db")
 # With Turso set up, the local file is only a replica; kept apart from DB_PATH so an
 # existing local database is never opened as one.
-REPLICA_PATH = "docflow-replica.db"
+REPLICA_PATH = os.environ.get("DOCFLOW_REPLICA", "docflow-replica.db")
 CHECK_EVERY_SECONDS = 10
+# Shown when storage fails; never includes the error text, which could name the database.
+UNREACHABLE = "Can't reach the database right now. Nothing new was saved. Try again in a moment."
+SAVE_FAILED = "Couldn't save that change. Check the board, then try again."
+SUBMIT_FAILED = ("Couldn't save your request. What you typed is still in the form. "
+                 "Check the Status board before resubmitting, in case it went through.")
+
+log = logging.getLogger("docflow")
+
 # Offered under "You are" from the start, since a hosted app begins with an empty database.
 TEAM = ["Ayma", "Kostas", "Alex", "Elina"]
 
@@ -68,6 +78,26 @@ def get_conn():
     return conn, storage
 
 
+def storage_unavailable():
+    """Tell the viewer storage is down, offer a retry and stop drawing the page."""
+    log.warning("Storage unavailable", exc_info=True)
+    st.error(UNREACHABLE)
+    # Clearing the cache makes the next run connect and sync again from scratch.
+    st.button("Try again", key="retry-storage", on_click=get_conn.clear)
+    st.stop()
+
+
+def save(action, *args):
+    """Run a write for a button; on a storage failure say so and return False."""
+    try:
+        action(*args)
+    except STORAGE_ERRORS:
+        log.warning("Write failed", exc_info=True)
+        st.error(SAVE_FAILED)
+        return False
+    return True
+
+
 def format_time(value):
     moment = datetime.fromisoformat(value) if isinstance(value, str) else value
     return moment.astimezone().strftime("%d %b %Y, %H:%M")
@@ -85,7 +115,14 @@ def format_duration(delta):
 @st.fragment(run_every=CHECK_EVERY_SECONDS)
 def reassignment_watch(conn):
     """Reassign overdue requests while anyone has the app open."""
-    if reassign_overdue(conn):
+    try:
+        reassigned = reassign_overdue(conn)
+    except STORAGE_ERRORS:
+        log.warning("Overdue check failed", exc_info=True)
+        st.warning("Can't reach the database to check for overdue requests. "
+                   f"Checking again in {CHECK_EVERY_SECONDS} s.")
+        return
+    if reassigned:
         st.rerun(scope="app")
 
 
@@ -106,18 +143,20 @@ def sidebar(conn, storage):
             "Reassign to backup after (minutes without action)",
             min_value=1, step=1, value=get_timeout_minutes(conn),
         )
-        if minutes != get_timeout_minutes(conn):
-            set_timeout_minutes(conn, minutes)
+        if minutes != get_timeout_minutes(conn) and save(set_timeout_minutes, conn, minutes):
             st.rerun()
         st.caption(f"Storage: {storage}")
     return viewer
 
 
 def request_form(conn):
-    with st.form("new_request", clear_on_submit=True):
-        title = st.text_input("Document requested *")
-        requester = st.text_input("Requested by *")
-        details = st.text_area("Details")
+    # The form is cleared by moving to new widget keys after a successful submit, so a
+    # failed submit keeps what was typed.
+    round_ = st.session_state.setdefault("form_round", 0)
+    with st.form(f"new_request-{round_}"):
+        title = st.text_input("Document requested *", key=f"title-{round_}")
+        requester = st.text_input("Requested by *", key=f"requester-{round_}")
+        details = st.text_area("Details", key=f"details-{round_}")
         submitted = st.form_submit_button("Submit request")
 
     if submitted:
@@ -125,10 +164,19 @@ def request_form(conn):
             owner = choose_owner(conn, TEAM)
             backup = choose_backup(conn, owner, TEAM)
             request = create_request(conn, title, requester, owner, details, backup)
+        except STORAGE_ERRORS:
+            log.warning("Submit failed", exc_info=True)
+            st.error(SUBMIT_FAILED)
         except DocFlowError as err:
             st.error(str(err))
         else:
-            st.success(f"Request #{request.id} received and assigned to {request.owner}.")
+            st.session_state.form_round = round_ + 1
+            st.session_state.form_notice = (
+                f"Request #{request.id} received and assigned to {request.owner}.")
+            st.rerun()
+    notice = st.session_state.pop("form_notice", None)
+    if notice:
+        st.success(notice)
 
 
 def status_board(conn, viewer):
@@ -165,16 +213,16 @@ def request_card(conn, request, timeout, viewer):
             delivery_action(conn, request, viewer)
         elif target and st.button(f"Move to {STAGE_LABELS[target]}",
                                   key=f"advance-{request.id}"):
-            advance_request(conn, request.id)
-            st.rerun()
+            if save(advance_request, conn, request.id):
+                st.rerun()
 
 
 def delivery_action(conn, request, viewer):
     if can_confirm_delivery(request, viewer):
         if st.button("Confirm delivered to client", key=f"deliver-{request.id}",
                      type="primary"):
-            confirm_delivery(conn, request.id, viewer)
-            st.rerun()
+            if save(confirm_delivery, conn, request.id, viewer):
+                st.rerun()
     elif viewer:
         st.caption(f"Waiting for {request.owner} to confirm delivery to the client")
     else:
@@ -193,8 +241,7 @@ def notifications_panel(conn, viewer):
     notes = list_notifications(conn, person)
     unread = sum(not n.is_read for n in notes)
     st.write(f"{unread} unread of {len(notes)}")
-    if unread and st.button("Mark all as read"):
-        mark_notifications_read(conn, person)
+    if unread and st.button("Mark all as read") and save(mark_notifications_read, conn, person):
         st.rerun()
     for note in notes:
         with st.container(border=True):
@@ -222,21 +269,30 @@ def readout_panel(conn):
         "separately, so the two parts need not add up to the total.")
 
 
+def render(conn, storage):
+    reassignment_watch(conn)
+    viewer = sidebar(conn, storage)
+    st.title("DocFlow")
+    form_tab, board_tab, notes_tab, readout_tab = st.tabs(
+        ["New request", "Status board", "Notifications", "Readout"])
+    with form_tab:
+        request_form(conn)
+    with board_tab:
+        status_board(conn, viewer)
+    with notes_tab:
+        notifications_panel(conn, viewer)
+    with readout_tab:
+        readout_panel(conn)
+
+
 try:
     conn, storage = get_conn()
-except DocFlowError as err:
+except STORAGE_ERRORS:
+    storage_unavailable()
+except DocFlowError as err:  # a settings mistake, such as only one Turso setting
     st.error(f"Cannot open the database: {err}")
     st.stop()
-reassignment_watch(conn)
-viewer = sidebar(conn, storage)
-st.title("DocFlow")
-form_tab, board_tab, notes_tab, readout_tab = st.tabs(
-    ["New request", "Status board", "Notifications", "Readout"])
-with form_tab:
-    request_form(conn)
-with board_tab:
-    status_board(conn, viewer)
-with notes_tab:
-    notifications_panel(conn, viewer)
-with readout_tab:
-    readout_panel(conn)
+try:
+    render(conn, storage)
+except STORAGE_ERRORS:
+    storage_unavailable()
