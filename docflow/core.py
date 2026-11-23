@@ -68,6 +68,11 @@ _ADDED_REQUEST_COLUMNS = {
     "delivered_by": "TEXT",
 }
 
+# Columns added to `people` after the first release; added to existing databases on connect.
+_ADDED_PEOPLE_COLUMNS = {
+    "requester_only": "INTEGER NOT NULL DEFAULT 0",
+}
+
 
 class DocFlowError(ValueError):
     """Raised when a request is invalid or cannot move to the next stage."""
@@ -251,6 +256,10 @@ def init_db(conn):
     for column, definition in _ADDED_REQUEST_COLUMNS.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE requests ADD COLUMN {column} {definition}")
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(people)")}
+    for column, definition in _ADDED_PEOPLE_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE people ADD COLUMN {column} {definition}")
     conn.commit()
 
 
@@ -282,13 +291,23 @@ def create_request(conn, title, requester, owner, details="", backup="", now=Non
     if backup and backup.casefold() == owner.casefold():
         raise DocFlowError("The backup must be someone other than the owner")
 
+    received_at = _stamp(now)
     cur = conn.execute(
         "INSERT INTO requests (title, requester, owner, details, backup, stage, received_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (title, requester, owner, details.strip(), backup, STAGES[0], _stamp(now)),
+        (title, requester, owner, details.strip(), backup, STAGES[0], received_at),
     )
+    request_id = cur.lastrowid
+    _notify(conn, owner, request_id, received_at,
+            f"You have been assigned request #{request_id} \"{title}\" "
+            f"(requested by {requester}).")
+    if backup:
+        _notify(conn, backup, request_id, received_at,
+                f"You are the backup for request #{request_id} \"{title}\" "
+                f"(requested by {requester}). It comes to you if the owner takes no "
+                "action in time.")
     conn.commit()
-    return get_request(conn, cur.lastrowid)
+    return get_request(conn, request_id)
 
 
 def _open_load(conn):
@@ -558,6 +577,29 @@ def add_person(conn, name):
         raise DocFlowError("A name is required")
     conn.execute("INSERT OR IGNORE INTO people (name) VALUES (?)", (name,))
     conn.commit()
+
+
+def set_requester_only(conn, name, requester_only):
+    """Mark a saved person as only submitting requests (never owner or backup), or undo it."""
+    name = name.strip()
+    if not name:
+        raise DocFlowError("A name is required")
+    conn.execute("INSERT OR IGNORE INTO people (name) VALUES (?)", (name,))
+    conn.execute("UPDATE people SET requester_only = ? WHERE name = ?",
+                 (1 if requester_only else 0, name))
+    conn.commit()
+
+
+def is_requester_only(conn, name):
+    row = conn.execute("SELECT requester_only FROM people WHERE name = ?",
+                       (name.strip(),)).fetchone()
+    return bool(row and row["requester_only"])
+
+
+def assignable_people(conn):
+    """Saved people who can own or back up a request: everyone except requester-only people."""
+    rows = conn.execute("SELECT name FROM people WHERE requester_only = 0").fetchall()
+    return sorted((row["name"] for row in rows), key=str.casefold)
 
 
 def people(conn):
