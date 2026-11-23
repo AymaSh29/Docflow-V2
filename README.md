@@ -11,13 +11,15 @@ Delivery to the client is confirmed by the preparer (the request's current owner
 click. Pick your name under "You are" in the sidebar; on approved requests you own, a
 "Confirm delivered to client" button appears, and the card records who confirmed. The
 person in "Requested by" then gets a delivery message in the Notifications tab. A new
-name typed into "You are" is saved and offered to everyone from then on; the team names
-in `TEAM` at the top of `app.py` are always offered. There
+name typed into "You are" is saved and offered to everyone from then on, and is also
+eligible to own or back up requests unless "I only submit requests" is ticked. The four
+starting names in `SEED_PEOPLE` at the top of `app.py` are saved on first run. There
 are no logins, so the name picker reflects the workflow rather than enforcing security.
 
-The form does not ask for an owner or a backup; the app assigns both from `TEAM`. The
-owner is the team member with the fewest undelivered requests they own or back up, and the
-backup is the next least busy member other than the owner (ties go to `TEAM` order).
+The form does not ask for an owner or a backup; the app assigns both from the saved
+people, leaving out anyone marked "I only submit requests". The owner is the person with
+the fewest undelivered requests they own or back up, and the backup is the next least busy
+person other than the owner (ties go to alphabetical order).
 
 If the owner does not move the request to its next stage
 within the timeout (set in the sidebar, in minutes; 2 by default for demos), it is

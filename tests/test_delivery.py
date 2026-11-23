@@ -55,7 +55,7 @@ def test_requester_is_notified_of_delivery(conn):
                             "(confirmed by Alex).")
     assert note.created_at == "2026-01-02T10:00:00+00:00"
     assert not note.is_read
-    assert list_notifications(conn, "Alex") == []
+    assert not any("delivered" in n.message for n in list_notifications(conn, "Alex"))
     assert "Sam" in people(conn)
 
 

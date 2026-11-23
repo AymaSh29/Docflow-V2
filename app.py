@@ -16,6 +16,7 @@ from docflow.core import (
     DocFlowError,
     add_person,
     advance_request,
+    assignable_people,
     can_confirm_delivery,
     choose_backup,
     choose_owner,
@@ -23,6 +24,7 @@ from docflow.core import (
     connect,
     create_request,
     get_timeout_minutes,
+    is_requester_only,
     list_notifications,
     list_requests,
     mark_notifications_read,
@@ -32,6 +34,7 @@ from docflow.core import (
     reassign_deadline,
     reassign_overdue,
     requests_by_stage,
+    set_requester_only,
     set_timeout_minutes,
     turso_settings,
 )
@@ -49,8 +52,9 @@ SUBMIT_FAILED = ("Couldn't save your request. What you typed is still in the for
 
 log = logging.getLogger("docflow")
 
-# Offered under "You are" from the start, since a hosted app begins with an empty database.
-TEAM = ["Ayma", "Kostas", "Alex", "Elina"]
+# Saved on first run so a fresh hosted database already has people to assign. They are
+# ordinary saved people, not a limit: anyone saved later can be an owner or backup too.
+SEED_PEOPLE = ["Ayma", "Kostas", "Alex", "Elina"]
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "docflow-icon.png")
 
@@ -73,7 +77,7 @@ def get_conn():
         conn, storage = connect(REPLICA_PATH, url, token), "Turso (kept across restarts)"
     else:
         conn, storage = connect(DB_PATH), f"local file {DB_PATH}"
-    for name in TEAM:
+    for name in SEED_PEOPLE:
         add_person(conn, name)
     return conn, storage
 
@@ -138,6 +142,14 @@ def sidebar(conn, storage):
         if viewer and viewer.strip() and viewer.strip().casefold() not in {
                 name.casefold() for name in names}:
             add_person(conn, viewer)
+        if viewer and viewer.strip():
+            only = st.checkbox(
+                "I only submit requests", value=is_requester_only(conn, viewer),
+                key=f"requester-only-{viewer.strip().casefold()}",
+                help="Tick this to be left out of owner and backup assignment.")
+            if only != is_requester_only(conn, viewer) and save(
+                    set_requester_only, conn, viewer, only):
+                st.rerun()
         st.header("Settings")
         minutes = st.number_input(
             "Reassign to backup after (minutes without action)",
@@ -161,8 +173,12 @@ def request_form(conn):
 
     if submitted:
         try:
-            owner = choose_owner(conn, TEAM)
-            backup = choose_backup(conn, owner, TEAM)
+            pool = assignable_people(conn)
+            if not pool:
+                raise DocFlowError("Nobody is available to own this request yet. "
+                                   "Add someone who handles requests in the sidebar.")
+            owner = choose_owner(conn, pool)
+            backup = choose_backup(conn, owner, pool)
             request = create_request(conn, title, requester, owner, details, backup)
         except STORAGE_ERRORS:
             log.warning("Submit failed", exc_info=True)

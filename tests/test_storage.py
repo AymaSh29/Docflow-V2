@@ -185,7 +185,7 @@ def test_data_survives_restart(tmp_path, open_db):
     assert all(contract.timestamps.values())
     assert (invoice.owner, invoice.reassigned_from) == ("Ayma", "Elina")
     assert [n.is_read for n in after["notifications"]["Sam"]] == [True]
-    assert [n.is_read for n in after["notifications"]["Ayma"]] == [False]
+    assert [n.is_read for n in after["notifications"]["Ayma"]] == [False, False]
     assert "Maria" in after["people"]
     assert after["timeout"] == 5
     assert after["readout"].median_total == timedelta(minutes=4)
